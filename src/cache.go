@@ -14,6 +14,17 @@ type queueData struct {
 	queueIndex int
 }
 
+type SimpleCache struct {
+	fileName   string
+	maxEntry   uint64
+	queue      *priorityQueue
+	ttl        time.Duration
+	data       map[string][]interface{}
+	readLock   bool
+	lock       *sync.RWMutex
+	updateFile chan bool
+}
+
 func newQueueItem(key string, data interface{}, ttl time.Duration) *queueData {
 	item := &queueData{
 		data: data,
@@ -42,41 +53,64 @@ type priorityQueue struct {
 	items []*queueData
 }
 
+func (p *priorityQueue) update(data *queueData) {
+	heap.Fix(p, data.queueIndex)
+}
+
+func (p *priorityQueue) push(data *queueData) {
+	heap.Push(p, data)
+}
+
+func (p *priorityQueue) pop() *queueData {
+	if p.Len() == 0 {
+		return nil
+	}
+	return heap.Pop(p).(*queueData)
+}
+
+func (p *priorityQueue) remove(queueData *queueData) {
+	heap.Remove(p, queueData.queueIndex)
+}
+
+func (p *priorityQueue) Len() int {
+	return len(p.items)
+}
+
+func (p *priorityQueue) Less(i, j int) bool {
+	if p.items[i].expireAt.IsZero() {
+		return false
+	}
+	if p.items[j].expireAt.IsZero() {
+		return true
+	}
+	return p.items[i].expireAt.Before(p.items[j].expireAt)
+}
+
+func (p *priorityQueue) Swap(i, j int) {
+	p.items[i], p.items[j] = p.items[j], p.items[i]
+	p.items[i].queueIndex = i
+	p.items[j].queueIndex = j
+}
+
+func (p *priorityQueue) Push(x interface{}) {
+	item := x.(*queueData)
+	item.queueIndex = len(p.items)
+	p.items = append(p.items, item)
+}
+
+func (p *priorityQueue) Pop() interface{} {
+	old := p.items
+	n := len(old)
+	item := old[n-1]
+	item.queueIndex = -1
+	p.items = old[0 : n-1]
+	return item
+}
+
 func newPriorityQueue() *priorityQueue {
 	queue := &priorityQueue{}
 	heap.Init(queue)
 	return queue
-}
-
-func (p priorityQueue) Len() int {
-	return len(p.items)
-}
-
-func (p priorityQueue) Less(i, j int) bool {
-	panic("implement me")
-}
-
-func (p priorityQueue) Swap(i, j int) {
-	panic("implement me")
-}
-
-func (p priorityQueue) Push(x interface{}) {
-	panic("implement me")
-}
-
-func (p priorityQueue) Pop() interface{} {
-	panic("implement me")
-}
-
-type SimpleCache struct {
-	fileName   string
-	maxEntry   uint64
-	queue      *priorityQueue
-	ttl        time.Duration
-	data       map[string][]interface{}
-	readLock   bool
-	lock       *sync.RWMutex
-	updateFile chan bool
 }
 
 func createNewCache(fileName string, maxEntry uint64) *SimpleCache {
