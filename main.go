@@ -1,76 +1,28 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 )
 
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
 func main() {
-	c := Cache{}
-	c.INIT()
+	c := CreateNewCache("", 1000)
+	c.setTTL(40)
 	for i := 0; i < 100; i++ {
 		k := RandStringRunes(5)
 		v := RandStringRunes(8)
-		c.Set(k, v)
+		c.Set(k, v, -1)
 	}
-	for k := range c.data {
-		fmt.Println(k, c.data[k])
-	}
-}
+	fmt.Println("set")
+	time.Sleep(1 * time.Second)
+	fmt.Println(c.queue.Len())
+	c.close()
 
-type Cache struct {
-	concurrent bool
-	data       map[string]string
-	readLock   bool
-	lock       *sync.Mutex
-}
-
-func (c *Cache) INIT() *Cache {
-	c.data = make(map[string]string)
-	c.lock = new(sync.Mutex)
-	c.concurrent = false
-	return c
-}
-
-func (c *Cache) Get(k string) (string, error) {
-	if c.readLock != true {
-		return c.data[k], nil
-	}
-	if c.concurrent == true {
-		return "", errors.New("write lock applied")
-	} else {
-		for c.readLock == true {
-			time.Sleep(10)
-			if c.readLock == false {
-				break
-			}
-		}
-		return c.data[k], nil
-	}
-}
-
-func (c *Cache) Set(k string, v string) {
-	if c.concurrent == true {
-		go setData(k, v, &c.data, c.lock, &c.readLock)
-	} else {
-		setData(k, v, &c.data, c.lock, &c.readLock)
-	}
-}
-
-func setData(k string, v string, d *map[string]string, lock *sync.Mutex, readLock *bool) {
-	*readLock = true
-	lock.Lock()
-	m := *d
-	m[k] = v
-	lock.Unlock()
-	*readLock = false
-}
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
 }
 
 var letterRunes = []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_#@!$%")

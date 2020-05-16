@@ -52,9 +52,9 @@ type SimpleCache struct {
 	queue         *priorityQueue
 	ttl           int64
 	data          map[string]*queueData
-	lock          *sync.RWMutex
+	lock          *sync.Mutex
 	updateFile    chan bool
-	expiryChannel chan bool
+	expiryChannel bool
 }
 
 /*
@@ -146,20 +146,21 @@ func newPriorityQueue() *priorityQueue {
 	return queue
 }
 
-func createNewCache(fileName string, maxEntry uint64) *SimpleCache {
+func CreateNewCache(fileName string, maxEntry uint64) *SimpleCache {
 	cache := &SimpleCache{
+		data:     make(map[string]*queueData),
 		fileName: fileName,
 		maxEntry: maxEntry,
 		queue:    newPriorityQueue(),
 		ttl:      -1,
+		lock:     new(sync.Mutex),
 	}
-	go cache.processExpiry()
+	go cache.concurrentProcessChecks()
 	return cache
 }
 
 func (c *SimpleCache) Set(k string, v interface{}, ttl int64) bool {
 	c.lock.Lock()
-	defer c.lock.Unlock()
 	data, present := c.getData(k, ttl)
 	if present == true {
 		if ttl == -1 {
@@ -168,16 +169,20 @@ func (c *SimpleCache) Set(k string, v interface{}, ttl int64) bool {
 			data.expireAt = time.Now().Unix() + ttl
 		}
 		c.queue.update(data)
+		c.data[k] = data
 	} else {
 		newData := newQueueItem(k, v, ttl)
 		c.queue.push(newData)
+		c.data[k] = newData
 	}
+	c.lock.Unlock()
+	c.processExpiry()
 	return true
 }
 
 func (c *SimpleCache) getData(k string, ttl int64) (*queueData, bool) {
 	data, present := c.data[k]
-	if !present || data.expired() {
+	if !present {
 		return nil, false
 	}
 	if ttl != -1 {
@@ -199,19 +204,17 @@ func (c *SimpleCache) Get(k string) (interface{}, error, bool) {
 }
 
 func (c *SimpleCache) processExpiry() {
-	for {
-		c.lock.Lock()
-		for c.queue.Len() > 0 && c.queue.items[0].expireAt > time.Now().Unix() {
-			delete(c.data, c.queue.items[0].key)
-			c.queue.pop()
-			c.lock.Unlock()
-		}
-		c.lock.Unlock()
-		time.Sleep(1 * time.Second)
-		k := <- c.expiryChannel
-		if k == true {
-			break
-		}
+	c.lock.Lock()
+	for c.queue.Len() > 0 && c.queue.items[0].expireAt < time.Now().Unix() {
+		delete(c.data, c.queue.items[0].key)
+		c.queue.pop()
+	}
+	c.lock.Unlock()
+}
+
+func (c *SimpleCache) concurrentProcessChecks() {
+	for c.expiryChannel != true {
+		c.processExpiry()
 	}
 }
 
@@ -219,7 +222,7 @@ func (c *SimpleCache) close() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.updatePersistentFile()
-	c.expiryChannel <- true
+	c.expiryChannel = true
 	c = new(SimpleCache)
 }
 
