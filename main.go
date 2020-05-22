@@ -12,16 +12,14 @@ func init() {
 
 func main() {
 	c := CreateNewCache("cache_data", 1000, false)
-	c.setTTL(1000)
+	c.setTTL(5)
 	for i := 0; i < 100; i++ {
-		//time.Sleep(100 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		k := RandStringRunes(5)
 		v := RandStringRunes(8)
 		println(k, v, i)
 		c.Set(k, v, -1)
 	}
-	fmt.Println("set")
-	time.Sleep(1 * time.Second)
 	fmt.Println(c.Queue.Len())
 	c.close()
 

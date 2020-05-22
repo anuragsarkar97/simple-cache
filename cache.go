@@ -158,6 +158,16 @@ func newPriorityQueue() *priorityQueue {
 	return queue
 }
 
+/*
+CreateNewCache build necessary models for the cache to work.
+and start the background expiry process to run.
+initially the ttl is set to -1. setTTL is mandatory to run the cache.
+no data will persist if TTl is set to -1.
+cache level ttl makes baseline for current set and get tools
+wait groups are added aas required. we have a single thread tester
+process expiry to do dup checks and expiry on ttl.
+*/
+
 func CreateNewCache(fileName string, maxEntry uint64, save bool) *SimpleCache {
 	cache := &SimpleCache{
 		Data:          make(map[string]*queueData),
@@ -173,6 +183,10 @@ func CreateNewCache(fileName string, maxEntry uint64, save bool) *SimpleCache {
 	go cache.concurrentProcessChecks()
 	return cache
 }
+
+/*
+global set functions for cache.
+*/
 
 func (c *SimpleCache) Set(k string, v interface{}, ttl int64) bool {
 	c.Lock.Lock()
@@ -200,6 +214,11 @@ func (c *SimpleCache) Set(k string, v interface{}, ttl int64) bool {
 	return true
 }
 
+/*
+gets the data and updates the data as required.
+adds timestamp if queried
+*/
+
 func (c *SimpleCache) getData(k string, ttl int64) (*queueData, bool) {
 	data, present := c.Data[k]
 	if !present {
@@ -213,6 +232,10 @@ func (c *SimpleCache) getData(k string, ttl int64) (*queueData, bool) {
 	return data, present
 }
 
+/*
+global get function for the cache
+*/
+
 func (c *SimpleCache) Get(k string) (interface{}, error, bool) {
 	c.Lock.Lock()
 	defer c.Lock.Unlock()
@@ -223,6 +246,10 @@ func (c *SimpleCache) Get(k string) (interface{}, error, bool) {
 	return nil, nil, false
 }
 
+/*
+process expiry process the queue and removes keys which have expired.
+
+*/
 func (c *SimpleCache) processExpiry() {
 	c.Lock.Lock()
 	for c.Queue.Len() > 0 && c.Queue.Items[0].ExpireAt < time.Now().Unix() {
@@ -245,6 +272,11 @@ func (c *SimpleCache) concurrentProcessChecks() {
 		c.processExpiry()
 	}
 }
+
+/*
+safe close of go routines and channel closure.
+always close it to update the persistent file
+*/
 
 func (c *SimpleCache) close() {
 	c.ExpiryChannel <- true
