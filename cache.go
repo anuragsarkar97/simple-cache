@@ -2,6 +2,10 @@ package main
 
 import (
 	"container/heap"
+	"encoding/json"
+	"log"
+	"math/rand"
+	"os"
 	"sync"
 	"time"
 )
@@ -10,94 +14,98 @@ var (
 	wg sync.WaitGroup
 )
 
-/*
-queue data struct is keep track of individual data point
-	1. interface data -> recommended type data []byte
-	2. key of the data either string or serialized string
-	3. expiry of the key default cache key or custom key
-	4. current queue index. higher on the queue denotes closer expiry
-*/
-
-type queueData struct {
-	key        string
-	data       interface{}
-	expireAt   int64
-	queueIndex int
+func init() {
+	rand.Seed(time.Now().UnixNano())
 }
 
 /*
-priority queue impl helps in maintaining expiry
-initial priority queue length is not fixed but
+Queue Data struct is keep track of individual Data point
+	1. interface Data -> recommended type Data []byte
+	2. Key of the Data either string or serialized string
+	3. expiry of the Key default cache Key or custom Key
+	4. current Queue index. higher on the Queue denotes closer expiry
+*/
+
+type queueData struct {
+	Key        string      `json:"key"`
+	Data       interface{} `json:"data"`
+	ExpireAt   int64       `json:"expire_at"`
+	QueueIndex int         `json:"index"`
+}
+
+/*
+priority Queue impl helps in maintaining expiry
+initial priority Queue length is not fixed but
 is configurable through global cache.
 
-Impl will take care of memory size and queue size.
+Impl will take care of memory size and Queue size.
 will change dynamically based on the values set in the
 cache. 1024 kb to 10,000 keys in current instruction.
 */
 
 type priorityQueue struct {
-	items []*queueData
+	Items []*queueData `json:"queue_data"`
 }
 
 /*
-Simple cache is a simple cache uses priority queue as
+Simple cache is a simple cache uses priority Queue as
 the core dta structure to keep keys.  it uses Least recently
-used keys concept to implement key store.
+used keys concept to implement Key store.
 the persistent file is called every 15 minute to update the file. though
 this is completely experimental and is computationally expensive
 to do so.
-It uses read write mutex lock to make sure the read and writes happen without
+It uses read write mutex Lock to make sure the read and writes happen without
 conflict.
 */
 
 type SimpleCache struct {
-	fileName      string
-	maxEntry      uint64
-	queue         *priorityQueue
-	ttl           int64
-	data          map[string]*queueData
-	lock          *sync.Mutex
-	updateFile    chan bool
-	expiryChannel chan bool
+	FileName      string                `json:"file_name"`
+	MaxEntry      uint64                `json:"max_entry"`
+	Queue         *priorityQueue        `json:"queue"`
+	TTL           int64                 `json:"cache_global_ttl"`
+	Data          map[string]*queueData `json:"data"`
+	Lock          *sync.Mutex           `json:"lock"`
+	ExpiryChannel chan bool             `json:"-"`
+	SaveFile      bool                  `json:"-"`
 }
 
 /*
 newQueueItem create a new item to be inserted into the cache.
-time stamp is use to set ttl. if tt is -1, it will set to global
+time stamp is use to set TTL. if tt is -1, it will set to global
 cache timing else it will set to the item presented.
 */
 
 func newQueueItem(key string, data interface{}, ttl int64) *queueData {
 	item := &queueData{
-		data: data,
-		key:  key,
+		Data: data,
+		Key:  key,
 	}
-	// since nobody is aware yet of this item, it's safe to touch without lock here
+	// since nobody is aware yet of this item, it's safe to touch without Lock here
 	item.addTimeStamp(ttl)
 	return item
 }
 
 /*
-expired checks if the item is expired and removes it form the queue
+expired checks if the item is expired and removes it form the Queue
 and the cache server.
 */
 
 func (q *queueData) expired() bool {
-	return q.expireAt < time.Now().Unix()
+	return q.ExpireAt < time.Now().Unix()
 }
 
 /*
-addTimeStamp add expiry time to the queue item
+addTimeStamp add expiry time to the Queue item
 will be then used by the processExpiryFunction to remove/add/update
-the queue.
+the Queue.
 */
 
 func (q *queueData) addTimeStamp(ttl int64) {
-	q.expireAt = time.Now().Add(time.Duration(ttl)).Unix()
+	q.ExpireAt = time.Now().Add(time.Duration(ttl)).Unix()
 }
 
 func (p *priorityQueue) update(data *queueData) {
-	heap.Fix(p, data.queueIndex)
+	heap.Fix(p, data.QueueIndex)
 }
 
 func (p *priorityQueue) push(data *queueData) {
@@ -112,35 +120,35 @@ func (p *priorityQueue) pop() *queueData {
 }
 
 func (p *priorityQueue) remove(queueData *queueData) {
-	heap.Remove(p, queueData.queueIndex)
+	heap.Remove(p, queueData.QueueIndex)
 }
 
 func (p *priorityQueue) Len() int {
-	return len(p.items)
+	return len(p.Items)
 }
 
 func (p *priorityQueue) Less(i, j int) bool {
-	return p.items[i].expireAt < p.items[j].expireAt
+	return p.Items[i].ExpireAt < p.Items[j].ExpireAt
 }
 
 func (p *priorityQueue) Swap(i, j int) {
-	p.items[i], p.items[j] = p.items[j], p.items[i]
-	p.items[i].queueIndex = i
-	p.items[j].queueIndex = j
+	p.Items[i], p.Items[j] = p.Items[j], p.Items[i]
+	p.Items[i].QueueIndex = i
+	p.Items[j].QueueIndex = j
 }
 
 func (p *priorityQueue) Push(x interface{}) {
 	item := x.(*queueData)
-	item.queueIndex = len(p.items)
-	p.items = append(p.items, item)
+	item.QueueIndex = len(p.Items)
+	p.Items = append(p.Items, item)
 }
 
 func (p *priorityQueue) Pop() interface{} {
-	old := p.items
+	old := p.Items
 	n := len(old)
 	item := old[n-1]
-	item.queueIndex = -1
-	p.items = old[0 : n-1]
+	item.QueueIndex = -1
+	p.Items = old[0 : n-1]
 	return item
 }
 
@@ -150,15 +158,16 @@ func newPriorityQueue() *priorityQueue {
 	return queue
 }
 
-func CreateNewCache(fileName string, maxEntry uint64) *SimpleCache {
+func CreateNewCache(fileName string, maxEntry uint64, save bool) *SimpleCache {
 	cache := &SimpleCache{
-		data:          make(map[string]*queueData),
-		fileName:      fileName,
-		maxEntry:      maxEntry,
-		queue:         newPriorityQueue(),
-		ttl:           -1,
-		lock:          new(sync.Mutex),
-		expiryChannel: make(chan bool),
+		Data:          make(map[string]*queueData),
+		FileName:      fileName,
+		MaxEntry:      maxEntry,
+		Queue:         newPriorityQueue(),
+		TTL:           -1,
+		Lock:          new(sync.Mutex),
+		ExpiryChannel: make(chan bool),
+		SaveFile:      save,
 	}
 	wg.Add(1)
 	go cache.concurrentProcessChecks()
@@ -166,69 +175,69 @@ func CreateNewCache(fileName string, maxEntry uint64) *SimpleCache {
 }
 
 func (c *SimpleCache) Set(k string, v interface{}, ttl int64) bool {
-	c.lock.Lock()
+	c.Lock.Lock()
 	data, present := c.getData(k, ttl)
 	if present == true {
 		if ttl == -1 {
-			data.expireAt = time.Now().Unix() + c.ttl
+			data.ExpireAt = time.Now().Unix() + c.TTL
 		} else {
-			data.expireAt = time.Now().Unix() + ttl
+			data.ExpireAt = time.Now().Unix() + ttl
 		}
-		c.queue.update(data)
-		c.data[k] = data
+		c.Queue.update(data)
+		c.Data[k] = data
 	} else {
 		var ttx int64
 		if ttl == -1 {
-			ttx = time.Now().Unix() + c.ttl
+			ttx = time.Now().Unix() + c.TTL
 		} else {
 			ttx = time.Now().Unix() + ttl
 		}
 		newData := newQueueItem(k, v, ttx)
-		c.queue.push(newData)
-		c.data[k] = newData
+		c.Queue.push(newData)
+		c.Data[k] = newData
 	}
-	c.lock.Unlock()
+	c.Lock.Unlock()
 	return true
 }
 
 func (c *SimpleCache) getData(k string, ttl int64) (*queueData, bool) {
-	data, present := c.data[k]
+	data, present := c.Data[k]
 	if !present {
 		return nil, false
 	}
 	if ttl != -1 {
 		data.addTimeStamp(ttl)
 	} else {
-		data.addTimeStamp(c.ttl)
+		data.addTimeStamp(c.TTL)
 	}
 	return data, present
 }
 
 func (c *SimpleCache) Get(k string) (interface{}, error, bool) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.Lock.Lock()
+	defer c.Lock.Unlock()
 	data, present := c.getData(k, -1)
 	if present {
-		return data.data, nil, present
+		return data.Data, nil, present
 	}
 	return nil, nil, false
 }
 
 func (c *SimpleCache) processExpiry() {
-	c.lock.Lock()
-	for c.queue.Len() > 0 && c.queue.items[0].expireAt < time.Now().Unix() {
-		delete(c.data, c.queue.items[0].key)
-		c.queue.pop()
+	c.Lock.Lock()
+	for c.Queue.Len() > 0 && c.Queue.Items[0].ExpireAt < time.Now().Unix() {
+		delete(c.Data, c.Queue.Items[0].Key)
+		c.Queue.pop()
 	}
-	c.lock.Unlock()
+	c.Lock.Unlock()
 }
 
 func (c *SimpleCache) concurrentProcessChecks() {
 	defer wg.Done()
 	for {
 		select {
-		case <-c.expiryChannel:
-			c.expiryChannel <- true
+		case <-c.ExpiryChannel:
+			c.ExpiryChannel <- true
 			return
 		default:
 			break
@@ -238,19 +247,32 @@ func (c *SimpleCache) concurrentProcessChecks() {
 }
 
 func (c *SimpleCache) close() {
-	c.expiryChannel <- true
-	<-c.expiryChannel
+	c.ExpiryChannel <- true
+	<-c.ExpiryChannel
 	wg.Wait()
-	c.updatePersistentFile()
-	close(c.expiryChannel)
+	close(c.ExpiryChannel)
+	if c.SaveFile {
+		c.updatePersistentFile()
+	}
 }
 
 func (c *SimpleCache) setTTL(ttl int64) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.ttl = ttl
+	c.Lock.Lock()
+	defer c.Lock.Unlock()
+	c.TTL = ttl
 }
 
 func (c *SimpleCache) updatePersistentFile() {
+	x, _ := json.Marshal(c)
+	err := writeGob(c.FileName, string(x))
+	if err != nil {
+		log.Printf("error occured while because : %s\n", err.Error())
+	}
+}
 
+func writeGob(filePath string, data string) error {
+	file, err := os.Create(filePath)
+	file.WriteString(data)
+	file.Close()
+	return err
 }
