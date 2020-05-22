@@ -272,7 +272,7 @@ func (c *SimpleCache) updatePersistentFile() {
 
 func writeGob(filePath string, data string) error {
 	file, err := os.Create(filePath)
-	file.WriteString(data)
-	file.Close()
+	_, _ = file.WriteString(data)
+	_ = file.Close()
 	return err
 }
