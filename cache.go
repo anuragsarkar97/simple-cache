@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+var wg sync.WaitGroup
 /*
 queue data struct is keep track of individual data point
 	1. interface data -> recommended type data []byte
@@ -54,7 +55,7 @@ type SimpleCache struct {
 	data          map[string]*queueData
 	lock          *sync.Mutex
 	updateFile    chan bool
-	expiryChannel bool
+	expiryChannel chan bool
 }
 
 /*
@@ -155,6 +156,7 @@ func CreateNewCache(fileName string, maxEntry uint64) *SimpleCache {
 		ttl:      -1,
 		lock:     new(sync.Mutex),
 	}
+	wg.Add(1)
 	go cache.concurrentProcessChecks()
 	return cache
 }
@@ -171,12 +173,17 @@ func (c *SimpleCache) Set(k string, v interface{}, ttl int64) bool {
 		c.queue.update(data)
 		c.data[k] = data
 	} else {
-		newData := newQueueItem(k, v, ttl)
+		var ttx int64
+		if ttl == -1 {
+			ttx = time.Now().Unix() + c.ttl
+		} else {
+			ttx = time.Now().Unix() + ttl
+		}
+		newData := newQueueItem(k, v, ttx)
 		c.queue.push(newData)
 		c.data[k] = newData
 	}
 	c.lock.Unlock()
-	c.processExpiry()
 	return true
 }
 
@@ -213,7 +220,15 @@ func (c *SimpleCache) processExpiry() {
 }
 
 func (c *SimpleCache) concurrentProcessChecks() {
-	for c.expiryChannel != true {
+	defer wg.Done()
+	for {
+		select {
+		case <-c.expiryChannel:
+			c.expiryChannel <- true
+			return
+		default:
+			break
+		}
 		c.processExpiry()
 	}
 }
@@ -222,8 +237,10 @@ func (c *SimpleCache) close() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.updatePersistentFile()
-	c.expiryChannel = true
-	c = new(SimpleCache)
+	c.expiryChannel <- true
+	<-c.expiryChannel
+	wg.Wait()
+	//close(c.expiryChannel)
 }
 
 func (c *SimpleCache) setTTL(ttl int64) {
