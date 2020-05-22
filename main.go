@@ -23,7 +23,7 @@ func main() {
 	fmt.Println("set")
 	time.Sleep(1 * time.Second)
 	fmt.Println(c.queue.Len())
-	//c.close()
+	c.close()
 
 }
 

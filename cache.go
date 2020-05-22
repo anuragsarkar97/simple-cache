@@ -6,7 +6,10 @@ import (
 	"time"
 )
 
-var wg sync.WaitGroup
+var (
+	wg sync.WaitGroup
+)
+
 /*
 queue data struct is keep track of individual data point
 	1. interface data -> recommended type data []byte
@@ -149,12 +152,13 @@ func newPriorityQueue() *priorityQueue {
 
 func CreateNewCache(fileName string, maxEntry uint64) *SimpleCache {
 	cache := &SimpleCache{
-		data:     make(map[string]*queueData),
-		fileName: fileName,
-		maxEntry: maxEntry,
-		queue:    newPriorityQueue(),
-		ttl:      -1,
-		lock:     new(sync.Mutex),
+		data:          make(map[string]*queueData),
+		fileName:      fileName,
+		maxEntry:      maxEntry,
+		queue:         newPriorityQueue(),
+		ttl:           -1,
+		lock:          new(sync.Mutex),
+		expiryChannel: make(chan bool),
 	}
 	wg.Add(1)
 	go cache.concurrentProcessChecks()
@@ -234,13 +238,11 @@ func (c *SimpleCache) concurrentProcessChecks() {
 }
 
 func (c *SimpleCache) close() {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.updatePersistentFile()
 	c.expiryChannel <- true
 	<-c.expiryChannel
 	wg.Wait()
-	//close(c.expiryChannel)
+	c.updatePersistentFile()
+	close(c.expiryChannel)
 }
 
 func (c *SimpleCache) setTTL(ttl int64) {
