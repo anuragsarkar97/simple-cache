@@ -1,4 +1,4 @@
-package main
+package cache
 
 import (
 	"container/heap"
@@ -307,4 +307,15 @@ func writeGob(filePath string, data string) error {
 	_, _ = file.WriteString(data)
 	_ = file.Close()
 	return err
+}
+
+
+var letterRunes = []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_#@!$%")
+
+func RandStringRunes(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+	return string(b)
 }
